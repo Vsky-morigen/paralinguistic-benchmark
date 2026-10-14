@@ -1,71 +1,105 @@
 from pathlib import Path
 
-from parabench.audio import inspect_wav
-from parabench.evaluators import evaluate_sample, validate_config
+from parabench.evaluators import evaluate_answer, unavailable_reason, validate_config
 from parabench.io import (
     exclusive_lock,
+    fingerprint,
     read_json,
-    read_jsonl,
     sha256_file,
     utc_now,
     write_json,
     write_jsonl,
 )
 from parabench.schemas import DIMENSIONS, EvaluationResult, Sample
+from parabench.tasks import build_request
 
 
-def evaluate_run(run: Path, config: dict, evidence_path: Path | None = None) -> dict:
+def checked_snapshot(run: Path) -> tuple[dict, list[Sample], dict]:
+    info = read_json(run / "run.json")
+    if (
+        info.get("schema_version") != 2
+        or info["spec"].get("task") != "paralinguistic_understanding"
+    ):
+        raise ValueError(
+            "Expected an audio understanding run; old generation runs are incompatible"
+        )
+    if fingerprint(info["spec"]) != info["fingerprint"]:
+        raise ValueError("Run specification changed")
+    for filename, key in [("samples.json", "samples_sha256"), ("choices.json", "choices_sha256")]:
+        if sha256_file(run / filename) != info[key]:
+            raise ValueError("Run snapshot changed")
+    return (
+        info,
+        [Sample.from_dict(s) for s in read_json(run / "samples.json")],
+        read_json(run / "choices.json"),
+    )
+
+
+def evaluate_run(run: Path, config: dict) -> dict:
     validate_config(config)
-    items = read_jsonl(evidence_path) if evidence_path else []
-    evidence = {x["sample_id"]: x for x in items}
-    if len(evidence) != len(items):
-        raise ValueError("Duplicate sample_id in external evidence")
     with exclusive_lock(run.parent / (run.name + ".lock")):
-        info = read_json(run / "run.json")
-        if sha256_file(run / "samples.json") != info["samples_sha256"]:
-            raise ValueError("Run sample snapshot changed")
-        samples = [Sample.from_dict(x) for x in read_json(run / "samples.json")]
-        if set(evidence) - {s.sample_id for s in samples}:
-            raise ValueError("Evidence contains sample IDs outside this run")
-        output = []
+        info, samples, catalog = checked_snapshot(run)
+        output, record_hashes = [], {}
+        model = info["spec"]["model_config"]
         for sample in samples:
             path = run / "records" / (sample.sample_id + ".json")
-            record = read_json(path) if path.exists() else {"status": "not_generated"}
-            ev = evidence.get(sample.sample_id, {})
-            error = None
-            if record["status"] == "success":
-                audio = run / record["generation"]["audio_path"]
-                if not audio.resolve().is_relative_to(run.resolve()):
-                    raise ValueError("Generated audio path escapes the run folder")
-                try:
-                    inspect_wav(audio)
-                    if sha256_file(audio) != record["audio_sha256"]:
-                        error = "Generated audio hash mismatch"
-                except (OSError, ValueError):
-                    error = "Generated audio missing or invalid"
-                if ev and ev.get("audio_sha256") != record["audio_sha256"]:
-                    error = "External evidence is not bound to this generated audio hash"
-                if error:
-                    results = [
-                        EvaluationResult(k, "error", reason=error).to_dict() for k in DIMENSIONS
-                    ]
-                else:
-                    results = evaluate_sample(
-                        sample, ev, config, simulated=record["generation"]["simulated"]
+            record = read_json(path) if path.is_file() else {"dimensions": {}}
+            if path.is_file():
+                record_hashes[sample.sample_id] = sha256_file(path)
+            audio = run / "inputs" / (sample.sample_id + ".wav")
+            audio_error = not audio.is_file() or sha256_file(audio) != sample.reference_sha256
+            results = []
+            for name in DIMENSIONS:
+                task = record.get("dimensions", {}).get(name, {})
+                prediction = task.get("prediction", {})
+                skip = unavailable_reason(sample, name)
+                if (
+                    not config["dimensions"][name]["enabled"]
+                    or name not in info["spec"]["dimensions"]
+                ):
+                    value = EvaluationResult(name, "skipped", reason="Dimension disabled")
+                elif (
+                    prediction.get("simulated")
+                    or model["adapter"] == "mock"
+                    or model.get("simulated", False)
+                ):
+                    value = EvaluationResult(
+                        name, "skipped", reason="Simulated prediction; not a benchmark score"
                     )
-            else:
-                results = [
-                    EvaluationResult(
-                        k, "skipped", reason="Generation failed or is missing"
-                    ).to_dict()
-                    for k in DIMENSIONS
-                ]
+                elif skip:
+                    value = EvaluationResult(name, "skipped", reason=skip)
+                elif audio_error:
+                    value = EvaluationResult(
+                        name, "error", reason="Input audio changed or is missing"
+                    )
+                elif task.get("status") != "success":
+                    value = EvaluationResult(
+                        name, "error", reason="Model inference failed or is missing"
+                    )
+                else:
+                    request = build_request(
+                        sample, name, audio, catalog, model["parameters"], model.get("seed", 0)
+                    )
+                    if task.get("request_hash") != fingerprint(request.to_payload()):
+                        value = EvaluationResult(
+                            name,
+                            "error",
+                            reason="Prediction is bound to a different input or question",
+                        )
+                    elif task.get("prediction_hash") != fingerprint(prediction):
+                        value = EvaluationResult(
+                            name, "error", reason="Prediction changed after inference"
+                        )
+                    else:
+                        value = evaluate_answer(
+                            sample, name, prediction.get("answer"), request.choices
+                        )
+                results.append(value.to_dict())
             output.append(
                 {
                     "sample_id": sample.sample_id,
                     "language": sample.language,
-                    "generation_status": record["status"],
-                    "simulated": record.get("generation", {}).get("simulated", False),
+                    "input_audio_sha256": sample.reference_sha256,
                     "results": results,
                 }
             )
@@ -75,18 +109,14 @@ def evaluate_run(run: Path, config: dict, evidence_path: Path | None = None) -> 
             run / "evaluation_provenance.json",
             {
                 "created_at": utc_now(),
-                "evidence_sha256": sha256_file(evidence_path) if evidence_path else None,
                 "run_fingerprint": info["fingerprint"],
                 "evaluations_sha256": sha256_file(run / "evaluations.jsonl"),
-                "generation_record_hashes": {
-                    s.sample_id: sha256_file(run / "records" / (s.sample_id + ".json"))
-                    for s in samples
-                    if (run / "records" / (s.sample_id + ".json")).exists()
-                },
+                "evaluation_config_sha256": sha256_file(run / "evaluation_config.json"),
+                "record_hashes": record_hashes,
             },
         )
         return {
             "samples": len(output),
-            "scored": sum(r["status"] == "scored" for x in output for r in x["results"]),
-            "errors": sum(r["status"] == "error" for x in output for r in x["results"]),
+            "scored": sum(v["status"] == "scored" for row in output for v in row["results"]),
+            "errors": sum(v["status"] == "error" for row in output for v in row["results"]),
         }

@@ -1,3 +1,3 @@
-from parabench.runner.execution import generate_run
+from parabench.runner.execution import predict_run
 
-__all__ = ["generate_run"]
+__all__ = ["predict_run"]

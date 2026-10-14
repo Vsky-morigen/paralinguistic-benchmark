@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "labels": {
+    "gender": [
+      "男声",
+      "女声"
+    ],
+    "emotion": [
+      "中性",
+      "愉悦",
+      "恼怒",
+      "悲伤",
+      "担忧"
+    ],
+    "speaking_rate": [
+      "偏慢",
+      "中速",
+      "偏快"
+    ]
+  },
+  "context": {
+    "EN-A01": [
+      "The speaker is sharing the good news of securing seats and checking the remaining steps with anticipation.",
+      "The speaker is routinely checking what the order status means and whether any further action is required."
+    ],
+    "EN-A02": [
+      "The speaker wants a practical comparison of the restaurants' atmosphere and menu range to make a routine choice.",
+      "The speaker is concerned about making an unsuitable choice for the parents and wants guidance they can feel confident about."
+    ],
+    "EN-A03": [
+      "The speaker is correcting an overly generic AI draft and insisting that the supplied personal details shape the rewrite.",
+      "The speaker wants the photo caption to preserve meaningful memories of the dog and is approaching the rewrite from that attachment."
+    ],
+    "EN-A04": [
+      "The speaker is focused on meeting tonight's deposit deadline and urgently needs another way to complete the payment.",
+      "The speaker is objecting to repeated failure after following the AI's guidance and expects a genuinely different approach."
+    ],
+    "EN-A05": [
+      "The speaker is working through the packing while feeling attached to the home they are leaving, and may need considerate help proceeding.",
+      "The speaker looks forward to the move and wants to keep the preparations progressing toward the new home."
+    ],
+    "EN-S01": [
+      "The speaker is sharing an achievement and looking forward to having their photo seen at the exhibition.",
+      "The speaker is uneasy about appearing in person and having their work judged, and may need help preparing for that experience."
+    ],
+    "EN-S02": [
+      "The speaker appreciates the generous delivery and is sharing how much food they have received.",
+      "The speaker objects to the excessive delivery at their door and wants their preferences or space to be respected."
+    ],
+    "EN-S03": [
+      "The speaker is objecting to the update that removed familiar content, treating it as an unwelcome design decision.",
+      "The speaker is dwelling on the loss of a place linked to time spent with their team and may want that loss acknowledged."
+    ],
+    "EN-S04": [
+      "The speaker is reflecting on the end of a familiar chapter with their teacher and feels attached to that relationship.",
+      "The speaker is passing on an acquaintance's retirement and studio arrangements as an ordinary update."
+    ],
+    "EN-S05": [
+      "The speaker is giving a straightforward update about the start date, badge, and first assignment at the new job.",
+      "The speaker is concerned about handling the front desk on their first shift and may need support preparing for reader questions."
+    ],
+    "EN-T01": [
+      "The speaker is dwelling on months of preparation coming to nothing and the lost chance to take part.",
+      "The speaker is challenging the fairness of canceling a paid entry and may want help questioning that decision."
+    ],
+    "EN-T02": [
+      "The speaker is focused on not knowing the test results and wants to decide whether to call now to reduce that uncertainty.",
+      "The speaker sounds weighed down by the possibility of an unfavorable result and is asking about calling from that sense of loss."
+    ],
+    "EN-T03": [
+      "The speaker is stressing that their request about photo sharing was ignored and wants that personal boundary respected.",
+      "The speaker is calmly recounting what their sister did and what they had previously requested, as background to the conversation."
+    ],
+    "EN-T04": [
+      "The speaker is describing an ordinary plan for an unexpectedly free afternoon, without making the change the main issue.",
+      "The speaker is enjoying the newly available personal time and looks forward to a quiet afternoon without interruptions."
+    ],
+    "EN-T05": [
+      "The speaker is concerned that a successful practice may not carry over to the actual test and seeks help handling that pressure.",
+      "The speaker is sharing progress in completing the route independently and looking for encouragement to carry that progress forward."
+    ],
+    "ZH-A01": [
+      "主要在分享进入正式名单的好消息，带着如愿后的期待确认最后手续。",
+      "主要按正常流程核对选课状态和确认入口，想得到清楚的操作说明。"
+    ],
+    "ZH-A02": [
+      "主要想比较两条围巾与灰色外套的搭配，寻求普通的选择建议。",
+      "主要拿不准礼物是否适合妈妈，怕选择不合意，倾向于获得更有把握的建议。"
+    ],
+    "ZH-A03": [
+      "主要在纠正AI删掉指定内容的做法，要求明确遵守保留最后一句的修改约束。",
+      "主要在意告别时仍能表达想继续联系的不舍，希望改写保留这份关系意味。"
+    ],
+    "ZH-A04": [
+      "主要在意明早使用报告的期限，急于找到能及时解决打不开问题的办法。",
+      "主要介意照AI建议反复操作仍无效，要求停止重复旧步骤并换一个有效方案。"
+    ],
+    "ZH-A05": [
+      "主要一边核对行李一边消化即将离开的不舍，希望协助能顾及这份告别感。",
+      "主要期待明早出发，带着积极筹备的劲头请AI补充行李清单。"
+    ],
+    "ZH-S01": [
+      "主要在分享自己入选演讲名单这件值得庆祝的事，期待即将到来的上台机会。",
+      "主要在意很快就要上台而自己是否准备得好，倾向于寻求准备上的支持。"
+    ],
+    "ZH-S02": [
+      "主要把室友吃光咖喱当作受到认可的迹象，在分享第一次做菜成功的满足。",
+      "主要介意室友把食物全部吃掉，在表达自己的份额或边界没有被顾及。"
+    ],
+    "ZH-S03": [
+      "主要在质疑剧情安排，认为铺垫之后仍让主角分开的处理不令人满意。",
+      "主要沉浸在主角分开的失落里，倾向于表达对这段关系和告别的不舍。"
+    ],
+    "ZH-S04": [
+      "主要想到以后更难与老室友见面，在表达对关系和相聚机会的留恋。",
+      "主要在平常地转述室友的搬家近况和上次见面的时间，作为聊天背景。"
+    ],
+    "ZH-S05": [
+      "主要在交代独住第一晚已经收拾妥当的状态，随意分享新的生活近况。",
+      "主要在意第一次独自在陌生住处过夜是否踏实，倾向于获得安心和安全上的确认。"
+    ],
+    "ZH-T01": [
+      "主要在回顾投入两周却没有得到认可的落差，倾向于先让这份失落被理解。",
+      "主要介意被要求重做却没有得到清楚理由，倾向于追问评审或反馈是否合理。"
+    ],
+    "ZH-T02": [
+      "主要仍在不确定的等待中反复担心面试结果，想确认是否应继续等或主动询问。",
+      "主要觉得这次机会可能已经落空，带着期待减弱后的失落询问还要不要等。"
+    ],
+    "ZH-T03": [
+      "主要在强调先前说过的借用边界又被忽视，希望自己的同意权被认真对待。",
+      "主要在按先后顺序交代借电脑这件事，语气已经平静，当前是在提供事件背景。"
+    ],
+    "ZH-T04": [
+      "主要在平常地描述父母离开后自己的晚间安排，作为日常近况来聊。",
+      "主要在享受重新按自己节奏做饭和看电影的时间，分享独处带来的轻松。"
+    ],
+    "ZH-T05": [
+      "主要担心练习顺利到了正式汇报时却发挥不出来，倾向于获得临场准备的支持。",
+      "主要在分享第一次完整记住内容的进步，带着信心增长确认明天也能做到。"
+    ]
+  }
+}

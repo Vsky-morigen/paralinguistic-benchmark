@@ -1,10 +1,7 @@
 schema_version: 1
 adapter: mock
-model: mock-tone-v1
-concurrency: 4
-timeout_seconds: 30
-max_attempts: 2
-retry_backoff_seconds: 0.1
-generation:
-  sample_rate: 16000
-  duration_seconds: 0.25
+model: mock
+concurrency: 2
+max_attempts: 1
+seed: 0
+parameters: {}

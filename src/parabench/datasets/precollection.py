@@ -162,7 +162,7 @@ def import_release(
             "decisions": dict(Counter(s.annotation_decision for s in samples)),
             "samples_sha256": sha256_file(release / "samples.jsonl"),
             "excluded_sha256": sha256_file(release / "excluded.jsonl"),
-            "purpose": "pilot; speech expression generation",
+            "purpose": "paralinguistic audio understanding",
             "speed_verified": False,
         }
         write_json(release / "manifest.json", manifest)
@@ -187,6 +187,25 @@ def load_samples(release: Path) -> list[Sample]:
 def validate_release(release: Path, reference_root: Path) -> dict:
     samples = load_samples(release)
     manifest = read_json(release / "manifest.json")
+    if "choices_sha256" in manifest:
+        from parabench.tasks import load_choices
+
+        catalog = load_choices(release)
+        for sample in samples:
+            context_options = catalog["context"].get(sample.provenance["text_id"], [])
+            if sample.targets["context"] not in context_options:
+                raise ValueError(f"Reference context is not in the choice set: {sample.sample_id}")
+            for dimension, target in [
+                ("gender", "gender"),
+                ("emotion", "emotion"),
+                ("speaking_rate", "speed"),
+            ]:
+                if dimension == "speaking_rate" and not sample.targets["speed_verified"]:
+                    continue
+                if sample.targets[target] not in catalog["labels"][dimension]:
+                    raise ValueError(
+                        f"Reference label is not in the choice set: {sample.sample_id}"
+                    )
     excluded = None
     if "excluded_sha256" in manifest:
         if sha256_file(release / "excluded.jsonl") != manifest["excluded_sha256"]:
@@ -200,9 +219,9 @@ def validate_release(release: Path, reference_root: Path) -> dict:
             raise ValueError(f"Missing reference audio: {s.sample_id}")
         if sha256_file(audio) != s.reference_sha256:
             raise ValueError(f"Reference audio hash mismatch: {s.sample_id}")
+        info = inspect_wav(audio)
         expected_format = manifest.get("reference_audio_format")
         if expected_format:
-            info = inspect_wav(audio)
             actual = (info["sample_rate"], info["channels"], info["sample_width_bytes"])
             expected = (expected_format["sample_rate"], expected_format["channels"], 2)
             if expected_format["codec"] != "pcm_s16le" or actual != expected:

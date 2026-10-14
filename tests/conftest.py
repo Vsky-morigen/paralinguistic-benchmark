@@ -58,6 +58,21 @@ def release(tmp_path):
     write_json(review, {"rows": rows, "review_sha256": sha256_file(originals)})
     output = tmp_path / "release_v1"
     import_release(review, originals, output, root)
+    write_json(
+        output / "choices.json",
+        {
+            "schema_version": 1,
+            "labels": {
+                "gender": ["男声", "女声"],
+                "emotion": ["中性", "悲伤"],
+                "speaking_rate": ["偏慢", "中速", "偏快"],
+            },
+            "context": {"ZH-TEST": ["平常地打招呼", "表达不满"]},
+        },
+    )
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    manifest["choices_sha256"] = sha256_file(output / "choices.json")
+    write_json(output / "manifest.json", manifest)
     return output, root, originals, review
 
 
@@ -68,10 +83,11 @@ def mock_config():
         "adapter": "mock",
         "model": "test-mock",
         "concurrency": 2,
-        "max_attempts": 3,
+        "max_attempts": 2,
         "retry_backoff_seconds": 0.001,
         "timeout_seconds": 1,
-        "generation": {"sample_rate": 16000, "duration_seconds": 0.02},
+        "seed": 0,
+        "parameters": {},
     }
 
 
@@ -81,8 +97,8 @@ def eval_config():
 
     return {
         "schema_version": 1,
-        "content_max_error_rate": 0.1,
-        "dimensions": {k: {"mode": "evidence"} for k in DIMENSIONS},
+        "prosody_metric": "position_f1_v2",
+        "dimensions": {name: {"enabled": True} for name in DIMENSIONS},
     }
 
 
@@ -91,35 +107,44 @@ def local_setup(tmp_path):
     root = tmp_path / "project"
     (root / "configs/models").mkdir(parents=True)
     (root / "weights").mkdir()
-    (root / "weights/weights.json").write_text('{"amplitude": 0.1}', encoding="utf-8")
-    loader = root / "loader.py"
-    loader.write_text(
-        """
-import json
-from pathlib import Path
-from parabench.models.local import LocalAudio
-
-def load_model(*, model_path, device, **kwargs):
-    amplitude = json.loads((model_path/'weights.json').read_text())['amplitude']
-    log = Path(kwargs['log'])
-    with log.open('a', encoding='utf-8') as f: f.write('load:'+device+'\\n')
-    class Model:
-        def generate(self, request):
-            with log.open('a', encoding='utf-8') as f:
-                f.write('generate:'+request.sample_id+':'+str(bool(request.instructions))+'\\n')
-            return LocalAudio(sample_rate=16000, samples=[amplitude]*160, simulated=True)
-        def close(self):
-            with log.open('a', encoding='utf-8') as f: f.write('close\\n')
-    return Model()
-""",
+    (root / "weights/weights.json").write_text('{"label":"男声"}', encoding="utf-8")
+    log = root / "calls.txt"
+    (root / "loader.py").write_text(
+        "import json\nfrom pathlib import Path\n"
+        "def load_model(*, model_path, device, **kwargs):\n"
+        "    label=json.loads((model_path/'weights.json').read_text(encoding='utf-8'))['label']\n"
+        "    log=Path(kwargs['log'])\n"
+        "    def note(text):\n"
+        "        with log.open('a',encoding='utf-8') as f: f.write(text+'\\n')\n"
+        "    note('load:'+device)\n"
+        "    class Model:\n"
+        "        def predict(self, request):\n"
+        "            assert request.audio_path.read_bytes().startswith(b'RIFF')\n"
+        "            note('predict:'+request.dimension+':'+str(request.transcript is not None))\n"
+        "            return [] if request.dimension in {'stress','pause'} else label if request.dimension=='gender' else request.choices[0]\n"
+        "        def close(self): note('close')\n"
+        "    return Model()\n",
         encoding="utf-8",
     )
-    log = root / "calls.txt"
     path = root / "configs/models/local.yaml"
+    import yaml
+
     path.write_text(
-        "schema_version: 1\nadapter: local\nmodel: fixture-local\nmodel_path: weights\nloader: loader.py:load_model\ndevice: cpu\nconcurrency: 1\nmax_attempts: 1\nload_kwargs:\n  log: "
-        + json.dumps(str(log))
-        + "\ngeneration: {}\n",
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "adapter": "local",
+                "model": "fixture-local",
+                "model_path": "weights",
+                "loader": "loader.py:load_model",
+                "device": "cpu",
+                "concurrency": 1,
+                "max_attempts": 1,
+                "parameters": {},
+                "load_kwargs": {"log": str(log)},
+            },
+            allow_unicode=True,
+        ),
         encoding="utf-8",
     )
     return root, path, log

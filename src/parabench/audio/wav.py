@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def inspect_wav(path: Path) -> dict:
-    """Validate a generated PCM WAV; compressed reference recordings stay untouched."""
+    """Validate PCM WAV input and return acoustic diagnostics."""
     try:
         with wave.open(str(path), "rb") as handle:
             channels, width, rate, frames, compression, _ = handle.getparams()

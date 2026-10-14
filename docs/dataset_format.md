@@ -1,41 +1,43 @@
 # 数据格式
 
-默认标签位于 `data/metadata/`，参考录音位于 `data/audio/`。两者由 `configs/dataset.yaml` 指定，路径相对于项目根目录。
+`configs/dataset.yaml` 默认从 `data/audio/` 读取录音，从 `data/metadata/` 读取题目和参考标注。所有路径相对于项目根目录。
 
-`samples.jsonl` 每行一个 JSON 对象：
+| 文件 | 内容 |
+|---|---|
+| samples.jsonl | 每行一条音频的文本和参考标签 |
+| choices.json | 固定类别选项，以及按台词编号分组的情境选项 |
+| manifest.json | 数据版本、数量、语言分布、音频格式和文件校验值 |
+
+## 样本字段
 
 | 字段 | 含义 |
 |---|---|
 | schema_version | 当前为 1 |
-| sample_id | 唯一题号，例如 AUDIO_003 |
-| language | zh 或 en |
-| text | 完整朗读文本，不含表达标记 |
-| targets.gender / emotion / context | 声音性别、情绪和情境意图 |
-| targets.speed / speed_verified | 语速要求及是否经过验证；未验证时不评分 |
-| targets.stress | status、display、spans；spans 为重音字符区间 |
-| targets.pause | status、display、positions；positions 为句内停顿位置 |
-| reference_audio | 相对于音频目录的文件名 |
-| reference_sha256 | 参考音频的 SHA-256 |
+| sample_id / language | 唯一编号及 zh / en |
+| text | 完整台词，仅重音、停顿任务向模型提供其无标记版本 |
+| targets.gender / emotion / context | 声音性别、情绪和完整情境意图 |
+| targets.speed / speed_verified | 语速类别及是否验证；未验证不评分 |
+| targets.stress | status、display、spans；参考重音字符区间 |
+| targets.pause | status、display、positions；参考句内停顿边界 |
+| reference_audio / reference_sha256 | 相对音频文件名及 SHA-256 |
 | provenance.text_id / version | 台词编号及表达版本 |
-| provenance.sentence_boundaries | 不计分的句间边界 |
+| provenance.sentence_boundaries | 不计分的句间边界，仅用于评分 |
 
-## 位置坐标
+参考标签只供评分。`status: unknown` 不评分；`status: annotated` 且数组为空表示明确没有。字符坐标规则见[评分规则](evaluation_protocol.md)。
 
-规范化依次执行 Unicode NFKC、保留字母数字、转小写。中英文均采用规范化后的**字符位置**，不按词切分。
+## 候选集合
 
-重音 `spans` 使用左闭右开区间 `[start,end)`。停顿 `positions` 表示位于第几个规范化字符之后。例如“你好，再见。”规范化为“你好再见”，重音 `[0,2]` 对应“你好”，停顿 `2` 对应“你好｜再见”。
+`choices.json` 的 `labels` 包含 `gender`、`emotion`、`speaking_rate` 类别数组，`context` 按 `text_id` 提供不同表达意图。每个集合至少有两个不同选项，并包含对应参考答案；语速标签在验证后须与其类别集合一致。英文题的基础类别由任务代码映射为英文标签。
 
-`status: annotated` 且位置数组为空表示明确没有；`status: unknown` 表示未知，不评分。句间边界和首尾静音不计入停顿评分。
+情境选项应对应同一台词下合理但不同的意图，避免仅凭不同话题即可排除。修改选项后需重新核查题目，并更新清单中的校验值。
 
-## 校验与更新
+`parabench dataset validate` 检查文件完整性、题号、计数、位置范围、音频格式和候选集合。划分开发集和测试集时按 `text_id` 分组。
 
-`manifest.json` 保存数据版本、题目数量、语言分布、标签文件校验值和音频格式。`parabench dataset validate` 检查题号、计数、位置范围及音频完整性。修改数据时建立新版本，同时更新清单；划分开发集和测试集时按 `text_id` 分组，避免相同台词跨集合。
-
-需要转换自己的参考录音时：
+## 转换自己的录音
 
 ```bash
 python -m pip install -e ".[audio]" -c requirements-dev.lock.txt
 python scripts/normalize_audio.py --input-dir data/raw --output-dir data/converted --sample-rate 48000
 ```
 
-转换器输出单声道 PCM16 WAV，不裁剪静音、不降噪、不调整响度；双声道按左右各 0.5 混合。输出目录必须为空。替换参考音频后须同步建立新的标签与校验清单。
+转换输出为单声道 PCM16 WAV，不裁剪静音、不降噪、不调整响度；双声道左右各 0.5 混合。输出目录须为空。替换音频后建立新的数据版本并更新音频校验值。

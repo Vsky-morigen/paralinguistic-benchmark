@@ -8,43 +8,38 @@ import yaml
 
 from parabench import __version__
 from parabench.config import load_yaml, model_config, project_root, resolve_dataset
-from parabench.datasets import import_release, validate_release
+from parabench.datasets import validate_release
+from parabench.evaluators import validate_config
 from parabench.models.base import ModelError
 from parabench.reporting import build_report
-from parabench.runner import generate_run
+from parabench.runner import predict_run
 from parabench.runner.evaluation import evaluate_run
+from parabench.schemas import DIMENSIONS
 
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
-        prog="parabench", description="Paralinguistic speech expression benchmark"
+        prog="parabench", description="Paralinguistic audio understanding benchmark"
     )
     root.add_argument("--version", action="version", version=__version__)
     commands = root.add_subparsers(dest="command", required=True)
     dataset = commands.add_parser("dataset").add_subparsers(dest="action", required=True)
-    imp = dataset.add_parser("import")
-    imp.add_argument("--annotations", type=Path, required=True)
-    imp.add_argument("--originals", type=Path, required=True)
-    imp.add_argument(
-        "--review-workbook", type=Path, help="Use the latest answers directly from the review XLSX"
+    dataset.add_parser("validate").add_argument(
+        "--config", type=Path, default=Path("configs/dataset.yaml")
     )
-    imp.add_argument("--config", type=Path, default=Path("configs/dataset.yaml"))
-    val = dataset.add_parser("validate")
-    val.add_argument("--config", type=Path, default=Path("configs/dataset.yaml"))
-    gen = commands.add_parser("generate")
-    gen.add_argument("--config", type=Path, required=True, help="Model YAML configuration")
-    gen.add_argument("--dataset-config", type=Path, default=Path("configs/dataset.yaml"))
-    gen.add_argument("--run-id", required=True)
-    gen.add_argument("--results-root", type=Path)
-    gen.add_argument("--resume", action="store_true")
-    gen.add_argument("--language", choices=["zh", "en"])
-    gen.add_argument("--limit", type=int)
-    ev = commands.add_parser("evaluate")
-    ev.add_argument("--run", type=Path, required=True)
-    ev.add_argument("--config", type=Path, default=Path("configs/evaluation.yaml"))
-    ev.add_argument("--evidence", type=Path)
-    rep = commands.add_parser("report")
-    rep.add_argument("--run", type=Path, required=True)
+    predict = commands.add_parser("predict")
+    predict.add_argument("--config", type=Path, required=True, help="Model YAML configuration")
+    predict.add_argument("--dataset-config", type=Path, default=Path("configs/dataset.yaml"))
+    predict.add_argument("--evaluation-config", type=Path, default=Path("configs/evaluation.yaml"))
+    predict.add_argument("--run-id", required=True)
+    predict.add_argument("--results-root", type=Path)
+    predict.add_argument("--resume", action="store_true")
+    predict.add_argument("--language", choices=["zh", "en"])
+    predict.add_argument("--limit", type=int)
+    evaluate = commands.add_parser("evaluate")
+    evaluate.add_argument("--run", type=Path, required=True)
+    evaluate.add_argument("--config", type=Path, default=Path("configs/evaluation.yaml"))
+    commands.add_parser("report").add_argument("--run", type=Path, required=True)
     return root
 
 
@@ -52,46 +47,39 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "dataset":
-            release, references = resolve_dataset(args.config)
-            if args.action == "import":
-                result = import_release(
-                    args.annotations, args.originals, release, references, args.review_workbook
-                )
-            else:
-                result = validate_release(release, references)
-        elif args.command == "generate":
-            release, _ = resolve_dataset(args.dataset_config)
-            config = model_config(args.config)
-            results_root = args.results_root or project_root(args.dataset_config) / "results"
+            result = validate_release(*resolve_dataset(args.config))
+        elif args.command == "predict":
+            release, audio = resolve_dataset(args.dataset_config)
+            evaluation = load_yaml(args.evaluation_config)
+            validate_config(evaluation)
+            dimensions = tuple(k for k in DIMENSIONS if evaluation["dimensions"][k]["enabled"])
             result = asyncio.run(
-                generate_run(
+                predict_run(
                     release,
-                    config,
-                    results_root,
+                    audio,
+                    model_config(args.config),
+                    args.results_root or project_root(args.dataset_config) / "results",
                     args.run_id,
                     resume=args.resume,
                     language=args.language,
                     limit=args.limit,
                     model_root=project_root(args.config),
+                    dimensions=dimensions,
                 )
             )
         elif args.command == "evaluate":
-            result = evaluate_run(args.run, load_yaml(args.config), args.evidence)
+            result = evaluate_run(args.run, load_yaml(args.config))
         else:
             result = build_report(args.run)
-        # Keep reports in files; stdout gives a bounded summary.
-        display = {k: v for k, v in result.items() if k not in {"scores", "source_hashes"}}
-        print(json.dumps(display, ensure_ascii=False, allow_nan=False))
+        print(
+            json.dumps(
+                {k: v for k, v in result.items() if k != "scores"},
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        )
         return 2 if result.get("failed", 0) or result.get("errors", 0) else 0
-    except (
-        ValueError,
-        KeyError,
-        TypeError,
-        OSError,
-        json.JSONDecodeError,
-        yaml.YAMLError,
-        ModelError,
-    ) as exc:
+    except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError, ModelError) as exc:
         print(f"parabench: {exc}", file=sys.stderr)
         return 1
 

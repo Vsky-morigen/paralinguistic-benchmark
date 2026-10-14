@@ -1,48 +1,128 @@
-from parabench.schemas import GenerationRequest, Sample
+import random
+import unicodedata
+from pathlib import Path
 
-PROMPT_VERSION = "expression_v1"
+from parabench.datasets.annotations import canonical
+from parabench.io import fingerprint, read_json, sha256_file
+from parabench.schemas import DIMENSIONS, Sample, UnderstandingRequest
+
+PROMPT_VERSION = "understanding_v1"
+LABEL_ENGLISH = {
+    "男声": "male-sounding voice",
+    "女声": "female-sounding voice",
+    "中性": "neutral",
+    "愉悦": "happy",
+    "恼怒": "angry",
+    "悲伤": "sad",
+    "担忧": "worried",
+    "偏慢": "slow",
+    "中速": "moderate",
+    "偏快": "fast",
+}
 
 
-def build_request(sample: Sample, generation: dict) -> GenerationRequest:
-    target = sample.targets
-    if sample.language == "en":
-        genders = {"男声": "male-sounding voice", "女声": "female-sounding voice"}
-        emotions = {
-            "中性": "neutral",
-            "愉悦": "happy",
-            "恼怒": "angry",
-            "悲伤": "sad",
-            "担忧": "worried",
-        }
-        speeds = {
-            "中速": "moderate",
-            "偏慢": "slow",
-            "偏快": "fast",
-            "中速至偏快": "moderate to fast",
-        }
-        instructions = (
-            "Read the supplied text aloud and express the following through your voice. "
-            "Output only the spoken reading.\n"
-            f"Voice: {genders.get(target['gender'], target['gender'])}\n"
-            f"Emotion: {emotions.get(target['emotion'], target['emotion'])}\n"
-            f"Communicative intent: {target['context']}\n"
-            f"Stress (emphasize text inside 【】): {target['stress']['display']}\n"
-            f"Intrasentence pauses (pause at ｜): {target['pause']['display']}\n"
-            f"Speaking rate: {speeds.get(target['speed'], target['speed'])} (currently unscored)\n"
-            "Do not read annotation symbols aloud. 无 means none; 无句内停顿 means no intrasentence pauses."
+def label_in_language(label: str, language: str) -> str:
+    return LABEL_ENGLISH.get(label, label) if language == "en" else label
+
+
+def plain_transcript(text: str) -> str:
+    # Keep word spaces, but remove punctuation, stress marks and pause symbols.
+    return " ".join(
+        "".join(
+            char for char in unicodedata.normalize("NFKC", text) if char.isalnum() or char.isspace()
+        ).split()
+    )
+
+
+def load_choices(release: Path) -> dict:
+    manifest = read_json(release / "manifest.json")
+    path = release / "choices.json"
+    if manifest.get("choices_sha256") != sha256_file(path):
+        raise ValueError("choices.json hash mismatch")
+    catalog = read_json(path)
+    if catalog.get("schema_version") != 1:
+        raise ValueError("Unsupported choice schema")
+    for values in [*catalog["labels"].values(), *catalog["context"].values()]:
+        if (
+            not isinstance(values, list)
+            or len(values) < 2
+            or len(set(values)) != len(values)
+            or not all(isinstance(v, str) and v.strip() for v in values)
+        ):
+            raise ValueError("Each choice set needs at least two distinct nonempty labels")
+    return catalog
+
+
+def build_request(
+    sample: Sample, dimension: str, audio: Path, catalog: dict, parameters: dict, seed: int = 0
+) -> UnderstandingRequest:
+    if dimension not in DIMENSIONS:
+        raise ValueError("Unknown dimension")
+    chinese = sample.language == "zh"
+    questions = {
+        "gender": (
+            "根据声音听感，选择声音性别。",
+            "Choose the perceived voice gender from the audio.",
+        ),
+        "emotion": (
+            "根据实际语气，选择说话者的情绪。",
+            "Choose the emotion conveyed by the vocal delivery.",
+        ),
+        "speaking_rate": (
+            "根据实际声音，选择语速类别。",
+            "Choose the speaking rate heard in the audio.",
+        ),
+        "context": (
+            "结合声音和说话内容，选择最符合说话者表达意图的情境。",
+            "Use the audio and its vocal delivery to choose the most likely communicative intent.",
+        ),
+    }
+    transcript = None
+    choices = []
+    if dimension in {"stress", "pause"}:
+        transcript = plain_transcript(sample.text)
+        n = len(canonical(transcript))
+        convention = (
+            f"规范化台词采用 Unicode NFKC、仅保留字母数字并转小写，共{n}个字符。"
+            if chinese
+            else f"Normalize the transcript using Unicode NFKC, keep alphanumeric characters and lowercase; there are {n} characters. "
         )
+        if dimension == "stress":
+            task = (
+                "听音频，返回所有重音字符区间。下标从0开始，区间左闭右开。只返回形如 [[0,2]] 的JSON数组；无重音返回[]。"
+                if chinese
+                else "Listen and return all stressed character spans as a JSON array, e.g. [[0,2]]. Use zero-based half-open intervals; return [] if none."
+            )
+        else:
+            task = (
+                "听音频，返回停顿所在的文字边界：数字表示前面有多少个规范化字符。只返回形如 [2] 的JSON数组；无停顿返回[]。无需标开头结尾静音，评分忽略句间停顿。"
+                if chinese
+                else "Listen and return pause boundaries as a JSON array, e.g. [2]; each number counts normalized characters preceding a pause. Return [] if none. Ignore initial/final silence; intersentence pauses are excluded by the scorer."
+            )
+        question = convention + task
     else:
-        instructions = (
-            "朗读给定台词，并通过声音表达以下要求。只生成朗读语音。\n"
-            f"声音性别：{target['gender']}\n情绪：{target['emotion']}\n"
-            f"表达意图：{target['context']}\n"
-            f"重音位置（【】内强调）：{target['stress']['display']}\n"
-            f"句内停顿（｜处停顿）：{target['pause']['display']}\n"
-            f"语速要求：{target['speed']}（该项暂不评分）\n"
-            "台词中的标记用于指导表达，不需要读出标记。"
+        question = questions[dimension][0 if chinese else 1]
+        choices = list(
+            catalog["context"][sample.provenance["text_id"]]
+            if dimension == "context"
+            else catalog["labels"][dimension]
         )
-    # No human recording path, rater answers, alternative choices, or validation
-    # status is present in the model-facing request.
-    return GenerationRequest(
-        sample.sample_id, sample.text, sample.language, instructions, generation
+        choices = [label_in_language(label, sample.language) for label in choices]
+        # Choice order is reproducible and independent of the correct answer.
+        random.Random(fingerprint([seed, sample.sample_id, dimension])).shuffle(choices)
+        question += (
+            "只返回一个候选标签，必须与选项文字完全一致。"
+            if chinese
+            else " Return exactly one of the supplied labels, without explanation."
+        )
+    return UnderstandingRequest(
+        f"{sample.sample_id}.{dimension}",
+        dimension,
+        sample.language,
+        audio,
+        sample.reference_sha256,
+        question,
+        choices,
+        parameters,
+        transcript,
     )

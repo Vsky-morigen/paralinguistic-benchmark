@@ -11,78 +11,106 @@ from parabench.io import (
     sha256_file,
     write_json,
 )
+from parabench.runner.evaluation import checked_snapshot
 from parabench.schemas import DIMENSIONS
+
+
+def label_macro_f1(values: list[dict]) -> float | None:
+    classes = {v["evidence"]["reference"] for v in values if v["status"] == "scored"}
+    if not classes:
+        return None
+    scores = []
+    for label in classes:
+        tp = sum(
+            v["evidence"]["reference"] == label and v["evidence"]["prediction"] == label
+            for v in values
+        )
+        fp = sum(
+            v["evidence"]["reference"] != label and v["evidence"]["prediction"] == label
+            for v in values
+        )
+        fn = sum(
+            v["evidence"]["reference"] == label and v["evidence"]["prediction"] != label
+            for v in values
+        )
+        scores.append(2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else 0)
+    return sum(scores) / len(scores)
 
 
 def build_report(run: Path) -> dict:
     with exclusive_lock(run.parent / (run.name + ".lock")):
+        info, samples, _ = checked_snapshot(run)
         provenance = read_json(run / "evaluation_provenance.json")
-        if sha256_file(run / "evaluations.jsonl") != provenance["evaluations_sha256"]:
-            raise ValueError("Evaluations changed after scoring")
-        for sample_id, digest in provenance["generation_record_hashes"].items():
-            record_path = run / "records" / (sample_id + ".json")
-            if sha256_file(record_path) != digest:
-                raise ValueError(
-                    "Generation changed after evaluation; rerun evaluate before report"
-                )
-            record = read_json(record_path)
-            if record["status"] == "success":
-                audio = (run / record["generation"]["audio_path"]).resolve()
-                if (
-                    not audio.is_relative_to(run.resolve())
-                    or sha256_file(audio) != record["audio_sha256"]
-                ):
-                    raise ValueError("Generated audio changed after evaluation")
+        if provenance["run_fingerprint"] != info["fingerprint"]:
+            raise ValueError("Run changed after evaluation")
+        for filename, key in [
+            ("evaluations.jsonl", "evaluations_sha256"),
+            ("evaluation_config.json", "evaluation_config_sha256"),
+        ]:
+            if sha256_file(run / filename) != provenance[key]:
+                raise ValueError("Evaluation changed; rerun evaluate")
+        records = run / "records"
+        current_ids = {
+            s.sample_id for s in samples if (records / (s.sample_id + ".json")).is_file()
+        }
+        if current_ids != set(provenance["record_hashes"]):
+            raise ValueError("Prediction records changed; rerun evaluate")
+        for sid, digest in provenance["record_hashes"].items():
+            if sha256_file(records / (sid + ".json")) != digest:
+                raise ValueError("Prediction changed; rerun evaluate")
+        for sample in samples:
+            audio = run / "inputs" / (sample.sample_id + ".wav")
+            if not audio.is_file() or sha256_file(audio) != sample.reference_sha256:
+                raise ValueError("Input audio changed; report is invalid")
         rows = read_jsonl(run / "evaluations.jsonl")
         summary = {
             "samples": len(rows),
             "languages": dict(Counter(x["language"] for x in rows)),
-            "generation_status": dict(Counter(x["generation_status"] for x in rows)),
-            "simulated_samples": sum(x["simulated"] for x in rows),
             "scores": [],
-            "overall_score": None,
-            "overall_note": "No overall score; incomplete dimensions and unlike methods are not pooled",
         }
-        for scope in ["all", "zh", "en"]:
-            selected = [x for x in rows if scope == "all" or x["language"] == scope]
-            for dimension in DIMENSIONS:
-                values = [r for x in selected for r in x["results"] if r["dimension"] == dimension]
-                scored = [r for r in values if r["status"] == "scored"]
-                methods = sorted({r["method"] for r in scored}) or [None]
-                for method in methods:
-                    group = [r for r in scored if r["method"] == method]
-                    summary["scores"].append(
-                        {
-                            "scope": scope,
-                            "dimension": dimension,
-                            "method": method,
-                            "selected": len(selected),
-                            "scored": len(group),
-                            "skipped": sum(r["status"] == "skipped" for r in values),
-                            "errors": sum(r["status"] == "error" for r in values),
-                            "coverage": len(group) / len(selected) if selected else None,
-                            "mean_score": sum(r["score"] for r in group) / len(group)
-                            if group
-                            else None,
-                            "pass_rate": sum(r["passed"] for r in group) / len(group)
-                            if group
-                            else None,
-                            "mean_precision": sum(r["evidence"]["precision"] for r in group)
-                            / len(group)
-                            if group and all("precision" in r["evidence"] for r in group)
-                            else None,
-                            "mean_recall": sum(r["evidence"]["recall"] for r in group) / len(group)
-                            if group and all("recall" in r["evidence"] for r in group)
-                            else None,
-                            "metric_versions": sorted(
-                                {
-                                    r["evidence"]["metric_version"]
-                                    for r in group
-                                    if "metric_version" in r["evidence"]
-                                }
-                            ),
-                        }
-                    )
+        for scope in ("all", "zh", "en"):
+            selected = [row for row in rows if scope == "all" or row["language"] == scope]
+            for name in DIMENSIONS:
+                values = [v for row in selected for v in row["results"] if v["dimension"] == name]
+                eligible = [v for v in values if v["status"] != "skipped"]
+                scored = [v for v in values if v["status"] == "scored"]
+                positions = name in {"stress", "pause"}
+                group = {
+                    "scope": scope,
+                    "dimension": name,
+                    "selected": len(selected),
+                    "eligible": len(eligible),
+                    "scored": len(scored),
+                    "skipped": sum(v["status"] == "skipped" for v in values),
+                    "errors": sum(v["status"] == "error" for v in values),
+                    "invalid_answers": sum(
+                        not v["evidence"].get("valid_answer", True) for v in scored
+                    ),
+                    "coverage": len(scored) / len(eligible) if eligible else None,
+                    "mean_score": sum(v["score"] for v in scored) / len(eligible)
+                    if eligible
+                    else None,
+                    "completed_mean_score": sum(v["score"] for v in scored) / len(scored)
+                    if scored
+                    else None,
+                    "pass_rate": sum(v["passed"] for v in scored) / len(eligible)
+                    if eligible
+                    else None,
+                    "completed_macro_f1": label_macro_f1(scored)
+                    if scored and not positions
+                    else None,
+                    "mean_precision": sum(v["evidence"]["precision"] for v in scored)
+                    / len(eligible)
+                    if positions and eligible
+                    else None,
+                    "mean_recall": sum(v["evidence"]["recall"] for v in scored) / len(eligible)
+                    if positions and eligible
+                    else None,
+                    "input_mode": "audio_with_plain_transcript"
+                    if positions
+                    else "audio_question_choices",
+                }
+                summary["scores"].append(group)
         write_json(run / "report.json", summary)
         buffer = io.StringIO(newline="")
         writer = csv.writer(buffer)
@@ -90,65 +118,60 @@ def build_report(run: Path) -> dict:
             [
                 "sample_id",
                 "language",
-                "generation_status",
-                "simulated",
                 "dimension",
                 "status",
-                "method",
                 "score",
                 "passed",
                 "reason",
+                "valid_answer",
                 "precision",
                 "recall",
                 "true_positive",
                 "false_positive",
                 "false_negative",
-                "metric_version",
             ]
         )
-        for x in rows:
-            for r in x["results"]:
+        for row in rows:
+            for value in row["results"]:
                 writer.writerow(
                     [
-                        x["sample_id"],
-                        x["language"],
-                        x["generation_status"],
-                        x["simulated"],
-                        r["dimension"],
-                        r["status"],
-                        r["method"],
-                        r["score"],
-                        r["passed"],
-                        r["reason"],
+                        row["sample_id"],
+                        row["language"],
+                        value["dimension"],
+                        value["status"],
+                        value["score"],
+                        value["passed"],
+                        value["reason"],
                         *[
-                            r["evidence"].get(k)
-                            for k in [
+                            value["evidence"].get(k)
+                            for k in (
+                                "valid_answer",
                                 "precision",
                                 "recall",
                                 "true_positive",
                                 "false_positive",
                                 "false_negative",
-                                "metric_version",
-                            ]
+                            )
                         ],
                     ]
                 )
-        atomic_bytes(run / "details.csv", buffer.getvalue().encode("utf-8-sig"))
+        atomic_bytes(run / "details.csv", ("\ufeff" + buffer.getvalue()).encode("utf-8"))
         lines = [
-            "# Benchmark run report",
+            "# 副语言理解评测结果",
             "",
-            f"Samples: {len(rows)}; simulated: {summary['simulated_samples']}.",
-            "No overall score. Missing evaluations are reported separately.",
+            f"音频数量：{len(rows)}",
             "",
-            "| Scope | Dimension | Method | Scored / selected | Skipped | Errors | Mean score | Precision | Recall |",
-            "|---|---|---|---:|---:|---:|---:|---:|---:|",
+            "主分数以全部有效题目为分母；无效回答及调用失败按0计入。未知标签、关闭维度和模拟预测不计分。",
+            "",
+            "| 范围 | 维度 | 有效题 | 已评分 | 错误 | 主分数 | 全对率 |",
+            "|---|---|---:|---:|---:|---:|---:|",
         ]
-        for row in summary["scores"]:
-            score = "n.a." if row["mean_score"] is None else f"{row['mean_score']:.4f}"
-            precision = "n.a." if row["mean_precision"] is None else f"{row['mean_precision']:.4f}"
-            recall = "n.a." if row["mean_recall"] is None else f"{row['mean_recall']:.4f}"
-            lines.append(
-                f"| {row['scope']} | {row['dimension']} | {row['method'] or 'unconfigured'} | {row['scored']} / {row['selected']} | {row['skipped']} | {row['errors']} | {score} | {precision} | {recall} |"
-            )
+        for group in summary["scores"]:
+            if group["selected"]:
+                score = "未评分" if group["mean_score"] is None else f"{group['mean_score']:.4f}"
+                passed = "—" if group["pass_rate"] is None else f"{group['pass_rate']:.4f}"
+                lines.append(
+                    f"| {group['scope']} | {group['dimension']} | {group['eligible']} | {group['scored']} | {group['errors']} | {score} | {passed} |"
+                )
         atomic_bytes(run / "report.md", ("\n".join(lines) + "\n").encode("utf-8"))
         return summary

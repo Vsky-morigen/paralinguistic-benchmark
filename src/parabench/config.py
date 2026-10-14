@@ -53,8 +53,14 @@ def model_config(path: Path) -> dict:
             raise ValueError(f"{key} must be an integer from 1 to {maximum}")
     for key, default in [("timeout_seconds", 120), ("retry_backoff_seconds", 1)]:
         value[key] = positive_number(value.get(key, default), key)
-    if not isinstance(value.setdefault("generation", {}), dict):
-        raise ValueError("generation must be a mapping")
+    if not isinstance(value.setdefault("parameters", {}), dict):
+        raise ValueError("parameters must be a mapping")
+    if "generation" in value:
+        raise ValueError("Use parameters instead of the old generation configuration")
+    if type(value.setdefault("seed", 0)) is not int:
+        raise ValueError("seed must be an integer")
+    if type(value.setdefault("simulated", False)) is not bool:
+        raise ValueError("simulated must be boolean")
     # API credentials must be supplied by environment, never configuration snapshots.
     if any(k.lower() in {"api_key", "token", "authorization", "headers"} for k in value):
         raise ValueError("Use api_key_env; literal credentials/custom headers are not persisted")

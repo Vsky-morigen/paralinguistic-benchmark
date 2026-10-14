@@ -1,14 +1,12 @@
 schema_version: 1
 adapter: local
-model: your-local-speech-model
+model: your-audio-understanding-model
 model_path: weights/your-model
 loader: examples/local_model_loader.py:load_model
 device: auto
-# One in-process model instance, loaded once and reused for every sample.
 concurrency: 1
 max_attempts: 1
-# HTTP timeouts do not preempt in-process CPU/GPU model inference.
+seed: 0
 load_kwargs: {}
-generation:
+parameters:
   temperature: 0
-  seed: 20261014

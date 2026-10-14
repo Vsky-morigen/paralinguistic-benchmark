@@ -1,6 +1,13 @@
-# 副语言表达 Benchmark
+# 副语言理解 Benchmark
 
-评测语音模型能否按要求表达**声音性别、情绪、重音、句内停顿、语速和情境意图**，支持中文和英文。输入台词与表达要求，模型生成语音，结果按语言和维度分别统计。默认启用全部六个副语言维度，并单独检查文本正确性。
+评测模型能否理解**输入音频**中的声音性别、情绪、重音、句内停顿、语速和情境意图，支持中文和英文。模型听录音并返回识别结果，程序与经过人类验证的参考标注比较。默认启用全部六个维度。
+
+| 任务 | 模型输入 | 模型输出 |
+|---|---|---|
+| 声音性别、情绪、语速、情境意图 | 音频＋问题＋候选标签 | 一个候选标签 |
+| 重音、句内停顿定位 | 音频＋问题＋无标记台词 | 重音区间或停顿位置数组 |
+
+台词只用于位置定位，已删除重音符号、停顿符号和标点。参考答案不发送给模型；无需先完成转写。
 
 ## 安装
 
@@ -15,52 +22,43 @@ python -m pip install -e . -c requirements-dev.lock.txt
 
 ## 准备音频
 
-将配套音频压缩包 `paralinguistic-audio-v1.zip` **解压到项目的 `data` 文件夹中**。解压后的结构如下，不要再嵌套一层压缩包名称：
-
-```text
-data/
-├── metadata/
-│   ├── manifest.json
-│   └── samples.jsonl
-└── audio/
-    ├── AUDIO_003.wav
-    └── ...
-```
-
-参考音频统一为 48 kHz、单声道、PCM16 WAV。默认从 `data/audio/` 读取，配置路径均相对于项目根目录。检查音频及标签：
+把配套压缩包 `paralinguistic-audio-v1.zip` **解压到 `data` 文件夹**，得到 `data/audio/*.wav`。题目和标签已随代码保存在 `data/metadata/`，不要把音频再嵌套一层目录。
 
 ```bash
 parabench dataset validate
 ```
 
-## 接入模型
+音频统一为 48 kHz、单声道、PCM16 WAV。所有配置路径均相对于项目根目录。
 
-- **API 服务**：修改 `configs/models/http_example.yaml` 的服务地址、模型名称和生成参数；密钥通过环境变量 `PARABENCH_API_KEY` 提供。服务须符合[HTTP 接口协议](docs/model_integration.md)。
-- **本地模型**：修改 `configs/models/local_example.yaml`，填写相对权重路径、设备和加载函数。参照[本地模型指南](docs/local_models.md)对接模型 SDK，加载器模板位于 `examples/local_model_loader.py`。
+## 接入与运行
 
-## 运行
+- **API 服务**：修改 `configs/models/http_example.yaml` 的服务地址和模型名称。密钥通过环境变量 `PARABENCH_API_KEY` 提供；服务须符合[HTTP 接口协议](docs/model_integration.md)。
+- **本地模型**：修改 `configs/models/local_example.yaml` 的权重路径、设备和加载函数。参照[本地接入指南](docs/local_models.md)对接模型 SDK。
 
 ```bash
-# 生成语音；本地模型换用 configs/models/local_example.yaml
-parabench generate --config configs/models/http_example.yaml --run-id model-a-001
+# 调用模型理解输入音频
+parabench predict --config configs/models/http_example.yaml --run-id model-a-001
 
-# 使用本次生成音频的识别、对齐或盲听结果评分
-parabench evaluate --run results/model-a-001 --evidence results/model-a-001/evidence.jsonl
+# 直接根据模型回答评分
+parabench evaluate --run results/model-a-001
 
-# 导出汇总和逐条结果
+# 导出报告
 parabench report --run results/model-a-001
 ```
 
-工程提供生成接口与计分器；ASR、情绪等识别器及重音／停顿检测器需自行接入，将结果写入 `evidence.jsonl`。字段及公式见[评分说明](docs/evaluation_protocol.md)。缺少证据或有效参考标签时显示“未评分”；当前数据的语速标签尚未验证，该项暂不评分。
+本地模型把配置替换为 `configs/models/local_example.yaml`。检查流程可使用 `configs/models/mock.yaml`，模拟回答不产生正式成绩。
 
-结果保存在 `results/model-a-001/`：`report.md` 为汇总，`details.csv` 为逐条分数，`audio/` 为模型生成音频。参考录音不作为模型输入。
+结果保存在 `results/model-a-001/`：`report.md` 为汇总、`details.csv` 为逐条分数、`records/` 为模型回答、`requests/` 为题目、`inputs/` 为本次输入音频副本。
 
-## 常用选项
+## 评分与选项
 
-- `--resume`：断点续跑。
+类别识别按标签准确率计分；重音、停顿按位置 F1 计分，多标与漏标都会扣分，句间停顿不计分。位置任务明确属于**有台词辅助的理解测评**。当前数据的语速标签尚未验证，该项显示未评分。
+
+拒答、漏答和无效格式按 0 分；调用失败单列为错误，并按 0 计入有效题目的主分数。未知参考标签、关闭维度和模拟预测不计分。分数按语言、维度分别报告，不输出跨维度总分。[详细评分规则](docs/evaluation_protocol.md)
+
+- `--resume`：断点续跑，保留已完成且校验通过的回答。
 - `--language zh` 或 `--language en`：选择语言。
-- `--limit 2`：先跑少量题目；全量运行使用新的运行编号。
-- `configs/evaluation.yaml`：调整评分维度，默认全部启用。
-- `configs/models/mock.yaml`：检查流程；生成测试音，不产生正式成绩。
+- `--limit 2`：先测试少量音频；全量运行使用新的运行编号。
+- `configs/evaluation.yaml`：启用或关闭维度，默认全部启用。
 
-分数范围为 0–1。重音和停顿按位置 F1 计分，多标和漏标都会扣分；句间停顿不计分。不同评分方法分别报告，不混算总分。数据字段见[数据格式](docs/dataset_format.md)。
+[数据格式](docs/dataset_format.md)

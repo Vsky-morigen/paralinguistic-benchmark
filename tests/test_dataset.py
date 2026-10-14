@@ -1,11 +1,8 @@
-import json
-
 import pytest
 
 from parabench.datasets.annotations import pause_annotation, stress_annotation
 from parabench.datasets.precollection import import_release, load_samples, validate_release
 from parabench.io import read_json, write_json
-from parabench.tasks import build_request
 
 
 def test_decision_overrides_populated_review_cells(release):
@@ -51,15 +48,6 @@ def test_sentence_boundaries_and_explicit_none():
     assert stress_annotation("无法判断", text)["status"] == "unknown"
     with pytest.raises(ValueError, match="brackets"):
         stress_annotation("【先看。再听。", text)
-
-
-def test_model_request_does_not_include_reference_or_raters(release):
-    sample = load_samples(release[0])[0]
-    from dataclasses import asdict
-
-    payload = json.dumps(asdict(build_request(sample, {})), ensure_ascii=False)
-    assert "reference_audio" not in payload and "rater" not in payload
-    assert "AUDIO_001.wav" not in payload
 
 
 def test_blank_correction_is_not_explicit_none(release, tmp_path):

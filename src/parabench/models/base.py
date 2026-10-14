@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from pathlib import Path
 
-from parabench.schemas import GenerationRequest, GenerationResult
+from parabench.io import sha256_file
+from parabench.schemas import PredictionResult, UnderstandingRequest
 
 
 class ModelError(Exception):
@@ -10,13 +10,18 @@ class ModelError(Exception):
         self.retryable = retryable
 
 
-class SpeechModelAdapter(ABC):
+def validate_input(request: UnderstandingRequest) -> None:
+    if sha256_file(request.audio_path) != request.audio_sha256:
+        raise ModelError("Input audio hash mismatch")
+
+
+class AudioModelAdapter(ABC):
     def __init__(self, config: dict):
         self.config = config
 
     @abstractmethod
-    async def generate(self, request: GenerationRequest, output_path: Path) -> GenerationResult:
-        """Save one complete PCM WAV and return metadata. Never expose reference audio."""
+    async def predict(self, request: UnderstandingRequest) -> PredictionResult:
+        """Read the supplied audio and return this dimension's answer."""
 
     async def close(self) -> None:
-        """Override for adapters with persistent network sessions."""
+        """Release persistent resources."""

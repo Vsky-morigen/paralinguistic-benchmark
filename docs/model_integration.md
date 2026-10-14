@@ -1,54 +1,58 @@
-# 模型接入
+# 模型接入协议
 
-支持两种方式：远程／本地HTTP服务使用 `adapter: http`；直接加载本地权重使用 `adapter: local`，见[本地模型接入](local_models.md)。通用本地加载器无需在适配器注册表中为每个模型再增加名字。
+模型接收已有音频并回答问题。HTTP 服务和本地加载器使用相同任务字段，每条音频的各维度分别发起请求，不共享参考答案或其他题目的回答。
 
-## Python接口
+## HTTP
+
+向配置的 `endpoint` 发送 POST JSON：
+
+```json
+{
+  "model": "your-model",
+  "input": {
+    "request_id": "AUDIO_003.emotion",
+    "dimension": "emotion",
+    "language": "zh",
+    "audio_sha256": "输入音频的64位SHA-256",
+    "audio": {"format": "wav", "data_base64": "完整WAV文件的Base64"},
+    "question": "根据实际语气，选择说话者的情绪。只返回一个候选标签。",
+    "choices": ["中性", "愉悦", "恼怒", "悲伤", "担忧"],
+    "parameters": {"temperature": 0}
+  }
+}
+```
+
+只有 `stress`、`pause` 请求包含 `transcript`，内容为无标记、无标点台词；这两种请求的 `choices` 为空。`question` 指定规范化字符坐标和返回格式。
+
+成功响应必须含 `answer`：
+
+```json
+{"answer": "中性", "usage": {"input_tokens": 100, "output_tokens": 5}}
+```
+
+| dimension | answer 格式 |
+|---|---|
+| gender / emotion / speaking_rate / context | 字符串，与一个候选标签一致 |
+| stress | JSON 数组，例如 `[[0,2],[5,7]]` |
+| pause | JSON 数组，例如 `[2,5]` |
+
+重音或停顿明确没有时返回 `[]`。数组必须作为 JSON 数组返回，不能包成字符串。中文分类题使用中文标签；英文题的基础类别使用英文标签，情境选项使用对应英文描述。均以本次请求的 `choices` 为准。
+
+这是统一桥接协议；厂商原生 API 需要由服务或自定义适配器转换请求和响应，并把模型原始回答解析为上述结构。服务应将实际音频交给模型，不能只提交文件名或用文字替代音频。
+
+配置有 `api_key_env` 时，通过该环境变量读取密钥，发送 `Authorization: Bearer ...`。不自动读取 `.env`。HTTP 408、429、5xx 和网络超时可重试；鉴权错误、其他 HTTP 错误及无效响应不重试。默认响应上限 1 MiB，不跟随重定向。
+
+## Python 适配器
+
+继承 `AudioModelAdapter`，实现：
 
 ```python
-class SpeechModelAdapter(ABC):
-    async def generate(self, request: GenerationRequest, output_path: Path) -> GenerationResult: ...
+async def predict(self, request: UnderstandingRequest) -> PredictionResult: ...
 
-    async def close(self) -> None: ...
+
+async def close(self) -> None: ...
 ```
 
-`GenerationRequest` 包含 `sample_id`、`text`、`language`、`instructions`、`generation`。不包含参考录音、参考路径、盲听者答案或替代情境选项。
+`request.audio_path` 是运行时输入文件，`to_payload()` 返回不含文件路径的题目字段。返回实际模型名称、回答、耗时和可选用量。测试适配器必须设置 `simulated=True`。临时错误抛出 `ModelError("简洁原因", retryable=True)`；错误消息不得包含密钥或原始服务响应。
 
-适配器必须把最终音频写到指定 `output_path`；返回实际采样率、耗时、模型名称及可选用量。音频为完整PCM WAV，1或2声道，采样位宽8/16/24/32位，采样率8–192 kHz，时长不超过600秒。适配器负责处理厂商的流式片段或压缩格式；运行器不会偷偷转码或替换成Mock。
-
-临时性失败抛出 `ModelError("已去敏的原因", retryable=True)`；参数错误、鉴权失败和无效音频应设为False。错误消息不应包含密钥或服务原始响应。需要长连接的适配器在 `close()` 释放连接。
-
-新增适配器步骤：实现 `models/<provider>.py`，在 `models/registry.py` 注册，同时在 `config.py` 的允许列表中加入该名字；增加配置、协议测试和README接入说明。无需更改数据、评分和报告逻辑。
-
-## HTTP桥接协议
-
-向配置的 `endpoint` 发送POST JSON；有 `api_key_env` 时，从该环境变量读取密钥并发送 `Authorization: Bearer ...`。
-
-请求：
-
-```json
-{
-  "request_id": "AUDIO_003",
-  "model": "your-model-name",
-  "input": {
-    "text": "需要朗读的完整台词",
-    "language": "zh",
-    "instructions": "声音性别、情绪、重音、句内停顿及完整表达意图"
-  },
-  "generation": {"temperature": 0, "seed": 20261014}
-}
-```
-
-成功响应：
-
-```json
-{
-  "format": "wav",
-  "audio_base64": "完整WAV文件的Base64字符串",
-  "sample_rate": 16000,
-  "usage": {"input_tokens": 100, "output_tokens": 200, "audio_seconds": 4.5}
-}
-```
-
-`sample_rate` 必须与WAV头一致；Base64需合法。只保存允许的数值用量字段，不保存响应原文或任意厂商元数据。默认响应大小上限32 MiB，可配置 `max_response_bytes`。不跟随HTTP重定向，也不下载返回的音频URL。
-
-HTTP 408、429、5xx以及网络超时可重试；其他HTTP失败和无效响应不重试。指数退避由 `retry_backoff_seconds`、`max_attempts` 控制。并发由 `concurrency` 控制。
+注册新的适配器时，在 `models/registry.py` 与 `config.py` 中加入其名称。

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "dataset_version": "1.0.0",
+  "dataset_version": "1.1.0",
   "sample_count": 44,
   "languages": {
     "zh": 25,
@@ -12,5 +12,6 @@
     "codec": "pcm_s16le",
     "sample_rate": 48000,
     "channels": 1
-  }
+  },
+  "choices_sha256": "62a3f659e8c948c437f6be49f466bd6c023b27ef2947c489a139a343c1402da8"
 }
