@@ -1,0 +1,14 @@
+# Versions exercised locally with Python 3.12.14 on 2026-10-14.
+PyYAML==6.0.3
+openpyxl==3.1.5
+et-xmlfile==2.0.0
+pytest==9.1.1
+ruff==0.17.0
+colorama==0.4.6
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0
+setuptools==84.0.0
+wheel==0.48.0
+imageio-ffmpeg==0.6.0

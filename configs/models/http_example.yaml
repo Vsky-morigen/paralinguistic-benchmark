@@ -1,0 +1,15 @@
+schema_version: 1
+adapter: http
+model: replace-with-your-model
+# This is the bridge contract documented in docs/model_integration.md.
+# Replace this URL with your service. It is not a provider-specific endpoint.
+endpoint: http://127.0.0.1:8000/generate
+api_key_env: PARABENCH_API_KEY
+concurrency: 2
+timeout_seconds: 120
+max_attempts: 3
+retry_backoff_seconds: 1
+max_response_bytes: 33554432
+generation:
+  temperature: 0
+  seed: 20261014

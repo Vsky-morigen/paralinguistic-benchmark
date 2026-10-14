@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "dataset_version": "1.0.0",
+  "sample_count": 44,
+  "languages": {
+    "zh": 25,
+    "en": 19
+  },
+  "samples_sha256": "1baed0e36c00634ab064c682f8dc6aa043e0df8a37c2230454623aa992075a48",
+  "reference_audio_format": {
+    "container": "wav",
+    "codec": "pcm_s16le",
+    "sample_rate": 48000,
+    "channels": 1
+  }
+}

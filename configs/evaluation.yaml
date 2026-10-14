@@ -1,0 +1,20 @@
+schema_version: 1
+prosody_metric: position_f1_v2
+content_max_error_rate: 0.1
+# Evaluate every dimension by default. Evidence must come from the generated
+# audio via independent tools; missing evidence/reference targets remain unscored.
+dimensions:
+  content:
+    mode: evidence
+  gender:
+    mode: evidence
+  emotion:
+    mode: evidence
+  stress:
+    mode: evidence
+  pause:
+    mode: evidence
+  speaking_rate:
+    mode: evidence
+  context:
+    mode: evidence
